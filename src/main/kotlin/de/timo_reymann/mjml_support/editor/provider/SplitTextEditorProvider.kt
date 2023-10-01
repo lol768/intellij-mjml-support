@@ -1,11 +1,15 @@
 package de.timo_reymann.mjml_support.editor.provider
 
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.fileEditor.*
+import com.intellij.openapi.progress.runWithModalProgressBlocking
+import com.intellij.openapi.progress.runBlockingMaybeCancellable
 import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
 import de.timo_reymann.mjml_support.editor.ui.MjmlFileEditorState
 import org.jdom.Element
+
 
 abstract class SplitTextEditorProvider(
     private val myFirstProvider: FileEditorProvider,
@@ -88,13 +92,43 @@ abstract class SplitTextEditorProvider(
         private const val SECOND_EDITOR = "second_editor"
         private const val SPLIT_LAYOUT = "split_layout"
 
+        @Suppress("UnstableApiUsage")
         fun getBuilderFromEditorProvider(
             provider: FileEditorProvider,
             project: Project,
             file: VirtualFile
         ): AsyncFileEditorProvider.Builder {
             return if (provider is AsyncFileEditorProvider) {
-                provider.createEditorAsync(project, file)
+                return if (ApplicationManager.getApplication().isDispatchThread) {
+                    if (ApplicationManager.getApplication().isWriteAccessAllowed) {
+                        // called from create file from template
+                        runBlockingMaybeCancellable {
+                            provider.createEditorBuilder(
+                                project,
+                                file
+                            )
+                        }
+                    } else {
+                        // called from a structure view builder without a write lock
+                        runWithModalProgressBlocking(
+                            project,
+                            "Opening " + file.name
+                        ) {
+                            provider.createEditorBuilder(
+                                project,
+                                file
+                            )
+                        }
+                    }
+                } else {
+                    // called from project view
+                    runBlockingMaybeCancellable {
+                        provider.createEditorBuilder(
+                            project,
+                            file
+                        )
+                    }
+                }
             } else {
                 object : AsyncFileEditorProvider.Builder() {
                     override fun build(): FileEditor {
